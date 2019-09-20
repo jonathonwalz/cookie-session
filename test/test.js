@@ -4,6 +4,7 @@ process.env.NODE_ENV = 'test';
 var assert = require('assert');
 var connect = require('connect');
 var request = require('supertest');
+var crypto = require('crypto');
 var session = require('..');
 
 describe('Cookie Session', function(){
@@ -74,6 +75,140 @@ describe('Cookie Session', function(){
           done();
         })
       })
+    })
+  })
+
+  describe('when options.encrypt = true', function () {
+    describe('when options.encryptionKey is set to 32 bytes', function () {
+      var sessionCookie = ''
+
+      before(function (done) {
+        var app = App({
+          encrypt: true,
+          encryptionKey: new Buffer('12345678901234567890123456789012')
+        })
+        app.use(function (req, res, next) {
+          req.session.message = 'hello'
+          res.end()
+        })
+
+        request(app)
+          .get('/')
+          .expect('Set-Cookie', /express:sess/)
+          .expect(200, function (err, res) {
+            if (err) return done(err)
+            cookie = res.header['set-cookie'].join(';')
+
+            var sessionCookieMatch = /express:sess=([^;]+);/.exec(cookie);
+            sessionCookie = sessionCookieMatch ? sessionCookieMatch[1] : ''
+
+            done()
+          })
+      })
+
+      it('should encrypt the cookie', function () {
+        var encryptedValue = sessionCookie.split(':')
+        var decipher = crypto.createDecipheriv('aes256', new Buffer('12345678901234567890123456789012'), new Buffer(encryptedValue[0], 'base64'))
+        var decryptedValue = decipher.update(encryptedValue[1], 'base64', 'utf8')
+        decryptedValue += decipher.final('utf8')
+
+        assert.strictEqual(decryptedValue, '{"message":"hello"}')
+      })
+
+      it('should work', function (done) {
+        var app = App({
+          encrypt: true,
+          encryptionKey: new Buffer('12345678901234567890123456789012')
+        })
+        app.use(function (req, res, next) {
+          assert.strictEqual(req.session.message, 'hello')
+          res.end('')
+        })
+
+        request(app)
+          .get('/')
+          .set('Cookie', cookie)
+          .expect(200, done)
+      })
+
+      describe('when accessed but not changed', function () {
+        it('should be the same session', function (done) {
+          var app = App({
+            encrypt: true,
+            encryptionKey: new Buffer('12345678901234567890123456789012')
+          })
+          app.use(function (req, res, next) {
+            assert.strictEqual(req.session.message, 'hello')
+            res.end('')
+          })
+
+          request(app)
+            .get('/')
+            .set('Cookie', cookie)
+            .expect(200, done)
+        })
+
+        it('should not Set-Cookie', function (done) {
+          var app = App({
+            encrypt: true,
+            encryptionKey: new Buffer('12345678901234567890123456789012')
+          })
+          app.use(function (req, res, next) {
+            assert.strictEqual(req.session.message, 'hello')
+            res.end('')
+          })
+
+          request(app)
+            .get('/')
+            .set('Cookie', cookie)
+            .expect(200, function(err, res){
+              if (err) return done(err);
+              assert.strictEqual(res.header['set-cookie'], undefined);
+              done();
+            })
+        })
+      })
+    })
+
+    describe('when options.encryptionKey is not set', function () {
+      it('should throw', function () {
+        assert.throws(function () {
+          session({
+            signed: false,
+            encrypt: true
+          })
+        })
+      })
+    })
+
+    describe('when options.encryptionKey is not 32 bytes', function () {
+      it('should throw', function () {
+        assert.throws(function () {
+          session({
+            signed: false,
+            encrypt: true,
+            encryptionKey: '123'
+          })
+        })
+      })
+    })
+  })
+
+  describe('when options.encrypt = false', function () {
+    it('should work', function (done) {
+      var app = App()
+      app.use(function (req, res, next) {
+        req.session.message = 'hi'
+        res.end()
+      })
+
+      request(app)
+        .get('/')
+        .expect('Set-Cookie', /express:sess/)
+        .expect(function (res) {
+          assert(res.headers['set-cookie'].join(';').indexOf(new Buffer('{"message":"hi"}').toString('base64')) > 0)
+        })
+        .expect(200, done)
     })
   })
 

@@ -12,6 +12,7 @@
  * @private
  */
 
+var crypto = require('crypto');
 var debug = require('debug')('cookie-session');
 var Cookies = require('cookies');
 var onHeaders = require('on-headers');
@@ -47,12 +48,16 @@ function cookieSession(options) {
   var keys = opts.keys;
   if (!keys && opts.secret) keys = [opts.secret];
 
+  // encryption
+  var encryptionKeyLength = opts.encryptionKey ? opts.encryptionKey.symmetricKeySize || opts.encryptionKey.length : 0;
+
   // defaults
   if (null == opts.overwrite) opts.overwrite = true;
   if (null == opts.httpOnly) opts.httpOnly = true;
   if (null == opts.signed) opts.signed = true;
 
   if (!keys && opts.signed) throw new Error('.keys required.');
+  if (opts.encrypt && (!opts.encryptionKey || encryptionKeyLength !== 32)) throw new Error('.encryptionKey required and must be 32 bytes.');
 
   debug('session options %j', opts);
 
@@ -77,7 +82,12 @@ function cookieSession(options) {
 
       if (json) {
         debug('parse %s', json);
+
         try {
+          if (req.sessionOptions.encrypt && req.sessionOptions.encryptionKey) {
+            json = decrypt(json, req.sessionOptions.encryptionKey);
+          }
+
           sess = new Session(req, decode(json));
         } catch (err) {
           // backwards compatibility:
@@ -222,6 +232,10 @@ Session.prototype.save = function(){
   var opts = ctx.sessionOptions;
   var name = ctx.sessionKey;
 
+  if (opts.encrypt && opts.encryptionKey) {
+    json = encrypt(json, opts.encryptionKey)
+  }
+
   debug('save %s', json);
   ctx.sessionCookies.set(name, json, opts);
 };
@@ -250,4 +264,40 @@ function decode(string) {
 function encode(body) {
   var str = JSON.stringify(body)
   return new Buffer(str).toString('base64')
+}
+
+/**
+ * Decrypt a base64 encoded string
+ *
+ * @param {String} str
+ * @param {String} str
+ * @return {String}
+ * @private
+ */
+
+function decrypt (string, encryptionKey) {
+  var splitString = string.split(':')
+  var iv = new Buffer(splitString[0], 'base64')
+  var decipher = crypto.createDecipheriv('aes256', encryptionKey, iv)
+
+  var body = decipher.update(new Buffer(splitString[1], 'base64'))
+  body += decipher.final()
+
+  return (new Buffer(body)).toString('base64')
+}
+
+/**
+ * Encrypt a base64-encoded string.
+ *
+ * @param {String} str
+ * @param {String} str
+ * @return {String}
+ * @private
+ */
+
+function encrypt (str, encryptionKey) {
+  var iv = crypto.randomBytes(16)
+  var cipher = crypto.createCipheriv('aes256', encryptionKey, iv)
+
+  return iv.toString('base64') + ':' + cipher.update(new Buffer(str, 'base64'), undefined, 'base64') + cipher.final('base64')
 }

@@ -81,6 +81,16 @@ change signature parameters like the algorithm of the signature.
 
 A string which will be used as single key if `keys` is not provided.
 
+##### encrypt
+
+If set to true, the session cookie value will be encrypted with aes256.
+`encryptionKey` must be set when this is true.
+
+##### encryptionKey
+
+When `encrypt` is set to true, this will be used as the encryption key.
+It must be set to a value with 32 bytes.
+
 ##### Cookie Options
 
 Other options are passed to `cookies.get()` and `cookies.set()` allowing you

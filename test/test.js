@@ -4,6 +4,8 @@ process.env.NODE_ENV = 'test'
 var assert = require('assert')
 var connect = require('connect')
 var request = require('supertest')
+var crypto = require('crypto')
+var Buffer = require('safe-buffer').Buffer
 var session = require('..')
 
 describe('Cookie Session', function () {
@@ -147,6 +149,131 @@ describe('Cookie Session', function () {
           .get('/')
           .expect(200, done)
       })
+    })
+  })
+
+  describe('when options.encrypt = true', function () {
+    describe('when options.encryptionKey is set to 32 bytes', function () {
+      var cookie, sessionCookie
+
+      before(function (done) {
+        var app = App({
+          encrypt: true,
+          encryptionKey: '12345678901234567890123456789012'
+        })
+        app.use(function (req, res, next) {
+          req.session.message = 'hello'
+          res.end()
+        })
+
+        request(app)
+          .get('/')
+          .expect(shouldHaveCookie('session'))
+          .expect(200, function (err, res) {
+            if (err) return done(err)
+            sessionCookie = cookies(res).session
+            cookie = cookieHeader(cookies(res))
+            done()
+          })
+      })
+
+      it('should encrypt the cookie', function () {
+        var encryptedValue = sessionCookie.value.split(':')
+        var decipher = crypto.createDecipheriv('aes256', '12345678901234567890123456789012', Buffer.from(encryptedValue[0], 'base64'))
+        var decryptedValue = decipher.update(encryptedValue[1], 'base64', 'utf8')
+        decryptedValue += decipher.final('utf8')
+
+        assert.strictEqual(decryptedValue, '{"message":"hello"}')
+      })
+
+      it('should work', function (done) {
+        var app = App({
+          encrypt: true,
+          encryptionKey: '12345678901234567890123456789012'
+        })
+        app.use(function (req, res, next) {
+          assert.strictEqual(req.session.message, 'hello')
+          res.end('')
+        })
+
+        request(app)
+          .get('/')
+          .set('Cookie', cookie)
+          .expect(200, done)
+      })
+
+      describe('when accessed but not changed', function () {
+        it('should be the same session', function (done) {
+          var app = App({
+            encrypt: true,
+            encryptionKey: '12345678901234567890123456789012'
+          })
+          app.use(function (req, res, next) {
+            assert.strictEqual(req.session.message, 'hello')
+            res.end('')
+          })
+
+          request(app)
+            .get('/')
+            .set('Cookie', cookie)
+            .expect(200, done)
+        })
+
+        it('should not Set-Cookie', function (done) {
+          var app = App({
+            encrypt: true,
+            encryptionKey: '12345678901234567890123456789012'
+          })
+          app.use(function (req, res, next) {
+            assert.strictEqual(req.session.message, 'hello')
+            res.end('')
+          })
+
+          request(app)
+            .get('/')
+            .set('Cookie', cookie)
+            .expect(shouldNotSetCookies())
+            .expect(200, done)
+        })
+      })
+    })
+
+    describe('when options.encryptionKey is not set', function () {
+      it('should throw', function () {
+        assert.throws(function () {
+          session({
+            signed: false,
+            encrypt: true
+          })
+        })
+      })
+    })
+
+    describe('when options.encryptionKey is not 32 bytes', function () {
+      it('should throw', function () {
+        assert.throws(function () {
+          session({
+            signed: false,
+            encrypt: true,
+            encryptionKey: '123'
+          })
+        })
+      })
+    })
+  })
+
+  describe('when options.encrypt = false', function () {
+    it('should work', function (done) {
+      var app = App()
+      app.use(function (req, res, next) {
+        req.session.message = 'hi'
+        res.end()
+      })
+
+      request(app)
+        .get('/')
+        .expect(shouldHaveCookieWithValue('session', Buffer.from('{"message":"hi"}').toString('base64')))
+        .expect(200, done)
     })
   })
 
